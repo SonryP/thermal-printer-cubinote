@@ -19,6 +19,7 @@ from .exceptions import (
 )
 
 from .protocol import PrinterProtocol
+from .cubinote import CubinoteProtocol
 
 from .printer import (
     PrinterConnection,
@@ -45,6 +46,7 @@ __all__ = [
     "FontError",
     "FontNotFoundError",
     "PrinterProtocol",
+    "CubinoteProtocol",
     "PrinterConnection",
     "ConnectionState",
     "BluetoothDevice",

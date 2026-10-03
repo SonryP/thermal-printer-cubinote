@@ -27,6 +27,16 @@ class PrinterProtocol:
     STATUS_RESPONSE_LENGTH = PROTOCOL_STATUS_RESPONSE_LENGTH
 
     @classmethod
+    def fit_width(cls, image: Image.Image, width: int) -> Image.Image:
+        # the raster header encodes width in whole bytes, and the head only
+        # places a row at its native width - scale anything else to fit
+        if image.width == width:
+            return image
+        height = max(1, round(image.height * width / image.width))
+        resized = image.resize((width, height), Image.LANCZOS)
+        return resized.convert("1") if image.mode == "1" else resized
+
+    @classmethod
     def build_raster_command(cls: Type["PrinterProtocol"], image: Image.Image) -> bytes:
         width_bytes = image.size[0] // PRINTER_WIDTH_BITS_PER_BYTE
         height = image.size[1]

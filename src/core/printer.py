@@ -1,19 +1,27 @@
+import json
 import socket
 import subprocess
 import re
 import time
 import logging
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
 
 from .protocol import PrinterProtocol
+from .cubinote import CubinoteProtocol
 from ..config.defaults import (
     RECONNECT_MAX_ATTEMPTS,
     RECONNECT_BACKOFF_BASE,
     RECONNECT_BACKOFF_CAP_SECONDS,
     BLUETOOTH_COMMAND_TIMEOUT,
+    BLUETOOTH_CONNECT_TIMEOUT,
+    BLUETOOTH_STATUS_TIMEOUT,
     BLUETOOTH_SCAN_POLL_INTERVAL,
+    CUBINOTE_NAME_PREFIX,
+    CUBINOTE_USER_ID,
+    CUBINOTE_ACK_TIMEOUT,
+    DEFAULT_CHUNK_SIZE,
     BLUETOOTH_PAIRING_RETRY_DELAY,
     BLUETOOTH_SCAN_STOP_TIMEOUT,
 )
@@ -42,18 +50,31 @@ class BluetoothDevice:
     mac_address: str
     name: str
     is_ctp_printer: bool = False
+    is_cubinote_printer: bool = False
+
+    @property
+    def is_known_printer(self) -> bool:
+        return self.is_ctp_printer or self.is_cubinote_printer
 
     @classmethod
     def from_scan_line(cls, mac: str, name: str) -> "BluetoothDevice":
-        is_printer = name.lower().startswith("coreprint")
-        return cls(mac_address=mac, name=name, is_ctp_printer=is_printer)
+        lowered = name.lower()
+        return cls(
+            mac_address=mac,
+            name=name,
+            is_ctp_printer=lowered.startswith("coreprint"),
+            is_cubinote_printer=lowered.startswith(CUBINOTE_NAME_PREFIX),
+        )
 
 
 class PrinterConnection:
     RFCOMM_CHANNEL = 1
     SPP_UUID = "00001101-0000-1000-8000-00805f9b34fb"
 
-    def __init__(self, auto_reconnect: bool = False, max_reconnect_attempts: int = RECONNECT_MAX_ATTEMPTS) -> None:
+    def __init__(self, auto_reconnect: bool = False,
+                 max_reconnect_attempts: int = RECONNECT_MAX_ATTEMPTS,
+                 cubinote_user_id: str = CUBINOTE_USER_ID) -> None:
+        self._cubinote_user_id: str = cubinote_user_id
         self._socket: Optional[socket.socket] = None
         self._state: ConnectionState = ConnectionState.DISCONNECTED
         self._mac_address: Optional[str] = None
@@ -64,6 +85,20 @@ class PrinterConnection:
         self._reconnect_attempts: int = 0
         self._last_successful_connection: Optional[float] = None
         self._discovered_channel: Optional[int] = None
+
+    @property
+    def is_cubinote(self) -> bool:
+        # cubinote/memobird hardware takes the escpos raster too, but only its
+        # framed json note jobs drive the auto-cutter
+        name = self._device_name or ""
+        return name.lower().startswith(CUBINOTE_NAME_PREFIX)
+
+    @property
+    def printer_width(self) -> int:
+        # print head width in dots
+        if self.is_cubinote:
+            return CubinoteProtocol.PRINTER_WIDTH
+        return PrinterProtocol.PRINTER_WIDTH
 
     @property
     def state(self) -> ConnectionState:
@@ -199,7 +234,9 @@ class PrinterConnection:
                 socket.SOCK_STREAM,
                 socket.BTPROTO_RFCOMM
             )
+            self._socket.settimeout(BLUETOOTH_CONNECT_TIMEOUT)
             self._socket.connect((mac_address, channel))
+            self._socket.settimeout(None)
             self.get_status()
             self._set_state(ConnectionState.CONNECTED)
             self._reconnect_attempts = 0
@@ -216,7 +253,9 @@ class PrinterConnection:
                         socket.SOCK_STREAM,
                         socket.BTPROTO_RFCOMM
                     )
+                    self._socket.settimeout(BLUETOOTH_CONNECT_TIMEOUT)
                     self._socket.connect((mac_address, self.RFCOMM_CHANNEL))
+                    self._socket.settimeout(None)
                     self.get_status()
                     self._set_state(ConnectionState.CONNECTED)
                     self._reconnect_attempts = 0
@@ -308,7 +347,9 @@ class PrinterConnection:
                 socket.SOCK_STREAM,
                 socket.BTPROTO_RFCOMM
             )
+            self._socket.settimeout(BLUETOOTH_CONNECT_TIMEOUT)
             self._socket.connect((self._mac_address, channel))
+            self._socket.settimeout(None)
             self.get_status()
             self._set_state(ConnectionState.CONNECTED)
             self._reconnect_attempts = 0
@@ -336,15 +377,30 @@ class PrinterConnection:
         except (StatusError, NotConnectedError):
             return False
 
-    def get_status(self) -> bytes:
+    def get_status(self, timeout: float = BLUETOOTH_STATUS_TIMEOUT) -> bytes:
         if not self._socket:
             raise NotConnectedError("Not connected to printer")
 
+        if self.is_cubinote:
+            # the cubinote never answers the ctp status query, so don't send
+            # it and wait out the timeout on every connect
+            return b""
+
+        previous_timeout = self._socket.gettimeout()
         try:
+            self._socket.settimeout(timeout)
             self._socket.send(PrinterProtocol.CMD_STATUS_REQUEST)
             return self._socket.recv(PrinterProtocol.STATUS_RESPONSE_LENGTH)
+        except socket.timeout:
+            # not every spp printer answers the ctp status query - silence is
+            # not fatal, so report "no status" instead of blocking forever
+            logger.debug("No status response within %ss", timeout)
+            return b""
         except socket.error as e:
             raise StatusError(f"Failed to get printer status: {e}")
+        finally:
+            if self._socket:
+                self._socket.settimeout(previous_timeout)
 
     def send_raw(self, data: bytes, reconnect_on_failure: bool = False) -> None:
         if not self._socket:
@@ -375,13 +431,72 @@ class PrinterConnection:
         self.send_raw(PrinterProtocol.CMD_INITIALIZE)
 
     def start_print(self) -> None:
-        self.send_raw(PrinterProtocol.CMD_START_PRINT)
+        # the ctp-500 brackets a raster with job markers; the cubinote has none
+        if not self.is_cubinote:
+            self.send_raw(PrinterProtocol.CMD_START_PRINT)
 
     def end_print(self) -> None:
-        self.send_raw(PrinterProtocol.CMD_END_PRINT)
+        if self.is_cubinote:
+            self.cut_cubinote()
+        else:
+            self.send_raw(PrinterProtocol.CMD_END_PRINT)
 
     def send_image(self, image_data: bytes) -> None:
         self.send_raw(image_data)
+
+    def cut_cubinote(self) -> Optional[Dict[str, Any]]:
+        # none of the cubinote's escpos commands cut the paper, but finishing a
+        # json note does - so close the raster with a note that prints a single
+        # blank row. returns the printer's ack, or None if it stayed silent,
+        # which it sometimes does even for notes it prints
+        if not self._mac_address:
+            raise NotConnectedError("No printer address known")
+
+        self.send_raw(CubinoteProtocol.build_cut_job(
+            self._mac_address, self._device_name or "", self._cubinote_user_id
+        ))
+        ack = self.read_cubinote_ack()
+        if ack is not None and ack.get("result") != 1:
+            logger.warning(f"Printer did not accept the cut note: {ack}")
+        return ack
+
+    def read_cubinote_ack(
+        self, timeout: float = CUBINOTE_ACK_TIMEOUT
+    ) -> Optional[Dict[str, Any]]:
+        if not self._socket:
+            raise NotConnectedError("Not connected to printer")
+
+        previous_timeout = self._socket.gettimeout()
+        buffer = b""
+        deadline = time.time() + timeout
+        try:
+            while time.time() < deadline:
+                self._socket.settimeout(max(0.1, deadline - time.time()))
+                try:
+                    chunk = self._socket.recv(DEFAULT_CHUNK_SIZE)
+                except socket.timeout:
+                    break
+                if not chunk:
+                    break
+                buffer += chunk
+
+                # the printer can answer with empty frames (e.g. to a status
+                # query), so step over anything that isnt a json ack
+                body, buffer = CubinoteProtocol.split_frame(buffer)
+                while body is not None:
+                    try:
+                        ack = json.loads(body)
+                    except (ValueError, UnicodeDecodeError):
+                        ack = None
+                    if isinstance(ack, dict):
+                        return ack
+                    body, buffer = CubinoteProtocol.split_frame(buffer)
+            return None
+        except socket.error as e:
+            raise StatusError(f"Failed reading printer response: {e}")
+        finally:
+            if self._socket:
+                self._socket.settimeout(previous_timeout)
 
     def __enter__(self) -> "PrinterConnection":
         return self
@@ -489,8 +604,8 @@ class PrinterConnection:
         except Exception as e:
             raise ScanError(f"Bluetooth scan failed: {e}")
 
-        # put ctp printers first in results
-        devices.sort(key=lambda d: (not d.is_ctp_printer, d.name))
+        # put supported printers first in results
+        devices.sort(key=lambda d: (not d.is_known_printer, d.name))
         return devices
 
     @staticmethod

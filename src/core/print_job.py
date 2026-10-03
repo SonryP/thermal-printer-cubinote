@@ -8,7 +8,7 @@ from PIL import Image
 
 from .protocol import PrinterProtocol
 from .printer import PrinterConnection
-from .exceptions import NotConnectedError, PrintError
+from .exceptions import NotConnectedError, PrintError, StatusError
 from ..config.defaults import (
     DEFAULT_CHUNK_SIZE,
     KB_DIVISOR,
@@ -149,6 +149,10 @@ class PrintJobManager:
                 self._complete_job(False, "Print cancelled")
                 return False
 
+            # printers differ in head width, so normalise the bitmap before
+            # building raster commands
+            image = PrinterProtocol.fit_width(image, self._printer.printer_width)
+
             self._report_progress(PRINT_PROGRESS_INIT, "Initializing...")
             self._printer.initialize()
             sleep(config.command_delay * PRINT_COMMAND_DELAY_MULTIPLIER)
@@ -213,7 +217,7 @@ class PrintJobManager:
             self._complete_job(False, "Error: Connection lost")
             return False
 
-        except PrintError as e:
+        except (PrintError, StatusError) as e:
             self._complete_job(False, f"Print error: {e}")
             return False
 
