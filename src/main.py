@@ -61,6 +61,8 @@
 #     python src/main.py
 # ------------------------------------------------------------------------------
 
+import logging
+import os
 import sys
 from pathlib import Path
 
@@ -69,18 +71,57 @@ src_dir = Path(__file__).parent
 if str(src_dir) not in sys.path:
     sys.path.insert(0, str(src_dir.parent))
 
+from src.utils.runtime import IS_FROZEN, LOG_FILENAME, app_dir
+
+# set by the windows build job: start the packaged app, then quit
+SMOKE_TEST = os.environ.get("THERMAL_PRINTER_SMOKE_TEST") == "1"
+
+
+def _prepare_frozen_runtime() -> None:
+    # a packaged exe runs from a temporary folder and has no console. work from
+    # the exe's folder so the gallery's relative paths land beside it, and log
+    # to a file there instead of the missing stdout
+    os.chdir(app_dir())
+    if sys.stdout is None:
+        log = open(app_dir() / LOG_FILENAME, "a", buffering=1, encoding="utf-8")
+        sys.stdout = sys.stderr = log
+        logging.basicConfig(
+            level=logging.INFO,
+            stream=log,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+
+
+def _report_startup_error(message: str) -> None:
+    print(message)
+    if IS_FROZEN and not SMOKE_TEST:
+        # nobody sees stdout in a packaged app, so say it in a dialog
+        try:
+            from tkinter import messagebox
+            messagebox.showerror("Thermal Printer", message)
+        except Exception:
+            pass
+
 
 def main() -> None:
+    if IS_FROZEN:
+        _prepare_frozen_runtime()
+
     try:
-        from src.gui.app import run_app
-        run_app()
+        from src.gui.app import PrinterApp
+        app = PrinterApp()
+        if SMOKE_TEST:
+            app.after(3000, app.destroy)
+        app.mainloop()
     except ImportError as e:
-        print(f"Import error: {e}")
-        print("\nMake sure all dependencies are installed:")
-        print("  pip install customtkinter pillow pyyaml numpy")
+        _report_startup_error(
+            f"Import error: {e}\n\n"
+            "Make sure all dependencies are installed:\n"
+            "  pip install customtkinter pillow pyyaml numpy"
+        )
         sys.exit(1)
     except Exception as e:
-        print(f"Error starting application: {e}")
+        _report_startup_error(f"Error starting application: {e}")
         sys.exit(1)
 
 

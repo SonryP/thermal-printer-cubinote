@@ -1,9 +1,9 @@
 # Thermal Printer
 
-A GUI app for controlling Bluetooth thermal printers on Linux. Currently supports the Core Innovation CTP-500, with more printers planned.
+A GUI app for controlling Bluetooth thermal printers on Linux and Windows. Supports the Core Innovation CTP-500 and Cubinote (Memobird) sticky-note printers, including the Cubinote's auto-cutter.
 
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
-![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20WSL-blue)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-yellow)
 
 ## Table of Contents
@@ -179,14 +179,17 @@ To add the app to your application launcher:
 
 The app will appear in your applications menu. You may need to log out and back in for it to show up.
 
-## Windows (WSL2)
+## Windows
 
-This application can run on Windows using WSL2 with a Linux GUI environment:
+A standalone `ThermalPrinter.exe` is built automatically by GitHub Actions on every push - download it from the latest run of the **Windows build** workflow (or from a release, for tagged versions). No Python install needed.
 
-1. Install WSL2 with a Linux distribution (Ubuntu recommended)
-2. Install an X server like [VcXsrv](https://sourceforge.net/projects/vcxsrv/) or use WSLg (Windows 11)
-3. Follow the Linux installation steps above
-4. For Bluetooth, you may need to use USB/IP to pass through your Bluetooth adapter to WSL
+1. Pair the printer once in **Windows Settings > Bluetooth & devices > Add device**
+2. Put `ThermalPrinter.exe` in a folder of its own (it writes `config.yaml`, its `gallery` and `thermal-printer.log` next to itself) and run it
+3. Click **Scan** - on Windows this lists your paired devices - and select the printer
+
+The exe isn't code-signed, so SmartScreen may warn the first time: choose **More info > Run anyway**.
+
+To build it yourself on Windows: `pip install -r requirements.txt pyinstaller`, then `pyinstaller --noconfirm thermal-printer.spec`.
 
 ## Usage
 

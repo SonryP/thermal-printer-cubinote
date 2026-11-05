@@ -259,6 +259,12 @@ LINUX_FONT_PATHS = [
     os.path.expanduser("~/.local/share/fonts"),
 ]
 
+WINDOWS_FONT_PATHS = [
+    os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts"),
+    # fonts installed for the current user only
+    os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Windows", "Fonts"),
+]
+
 PREFERRED_FONTS = [
     "DejaVu Sans Mono",
     "Liberation Mono",

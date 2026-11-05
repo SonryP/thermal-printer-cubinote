@@ -10,6 +10,7 @@ from enum import Enum
 
 from .protocol import PrinterProtocol
 from .cubinote import CubinoteProtocol
+from ..utils.runtime import IS_WINDOWS
 from ..config.defaults import (
     RECONNECT_MAX_ATTEMPTS,
     RECONNECT_BACKOFF_BASE,
@@ -145,6 +146,10 @@ class PrinterConnection:
 
     @staticmethod
     def discover_rfcomm_channel(mac_address: str) -> Optional[int]:
+        # sdptool and bluetoothctl are linux-only; on windows use the default
+        if IS_WINDOWS:
+            return None
+
         # try sdptool first - most reliable for getting rfcomm channel
         try:
             result = subprocess.run(
@@ -517,6 +522,16 @@ class PrinterConnection:
 
         devices: List[BluetoothDevice] = []
         seen_macs: set = set()
+
+        if IS_WINDOWS:
+            # windows lists what was paired in its bluetooth settings
+            from ..utils.bluetooth_windows import list_paired_devices
+            devices = [
+                BluetoothDevice.from_scan_line(mac, name)
+                for mac, name in list_paired_devices()
+            ]
+            devices.sort(key=lambda d: (not d.is_known_printer, d.name))
+            return devices
 
         def parse_device_line(line: str) -> None:
             patterns = [

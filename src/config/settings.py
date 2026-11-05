@@ -8,6 +8,7 @@ from .defaults import get_default_config, CONFIG_FILENAME, SETTINGS_SAVE_DELAY
 from .settings_validator import SettingsValidator, ValidationResult
 from .repository import SettingsRepository, YamlSettingsRepository
 from ..core.exceptions import ConfigFileError, InvalidConfigError
+from ..utils.runtime import app_dir
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class Settings:
             if config_dir:
                 self._config_dir = Path(config_dir)
             else:
-                self._config_dir = Path(__file__).parent.parent.parent
+                self._config_dir = app_dir()
 
             config_path = self._config_dir / CONFIG_FILENAME
             self._repository = YamlSettingsRepository(config_path)

@@ -4,8 +4,14 @@ from typing import Optional, Callable
 import subprocess
 import customtkinter as ctk
 
+from ...utils.runtime import IS_WINDOWS
 
-def check_bluetooth_status() -> bool:
+
+def check_bluetooth_status() -> Optional[bool]:
+    # windows has no bluetoothctl and no dependency-free way to read the
+    # radio state, so report it as unknown rather than off
+    if IS_WINDOWS:
+        return None
     try:
         result = subprocess.run(
             ["bluetoothctl", "show"],
@@ -129,7 +135,9 @@ class StatusBar(ctk.CTkFrame):
 
     def _update_bluetooth_status(self) -> None:
         self._bt_status = check_bluetooth_status()
-        if self._bt_status:
+        if self._bt_status is None:
+            self.bt_indicator.configure(text="BT: --", text_color="gray")
+        elif self._bt_status:
             self.bt_indicator.configure(text="BT: ON", text_color=("green", "#00CC00"))
         else:
             self.bt_indicator.configure(text="BT: OFF", text_color=("red", "#FF4444"))

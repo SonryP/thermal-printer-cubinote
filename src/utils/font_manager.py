@@ -26,6 +26,7 @@ PROJECT_FONTS_DIR = Path(__file__).parent.parent.parent / "fonts"
 
 from ..config.defaults import (
     LINUX_FONT_PATHS,
+    WINDOWS_FONT_PATHS,
     PREFERRED_FONTS,
     FALLBACK_FONTS,
     UNICODE_FALLBACK_FONTS,
@@ -33,6 +34,7 @@ from ..config.defaults import (
     DEFAULT_FONT_FAMILY,
 )
 from ..core.exceptions import FontNotFoundError
+from .runtime import IS_WINDOWS
 
 logger = logging.getLogger(__name__)
 
@@ -91,9 +93,15 @@ class FontManager:
         all_paths = []
         if PROJECT_FONTS_DIR.is_dir():
             all_paths.append(str(PROJECT_FONTS_DIR))
-        all_paths.extend(LINUX_FONT_PATHS)
-        all_paths.extend(EXTRA_FONT_PATHS)
+        if IS_WINDOWS:
+            all_paths.extend(WINDOWS_FONT_PATHS)
+        else:
+            all_paths.extend(LINUX_FONT_PATHS)
+            all_paths.extend(EXTRA_FONT_PATHS)
 
+        # windows paths are case-insensitive, so *.ttf and *.TTF match the
+        # same files there
+        registered = set()
         for font_dir in all_paths:
             if not os.path.isdir(font_dir):
                 continue
@@ -101,6 +109,10 @@ class FontManager:
             for ext in font_extensions:
                 pattern = os.path.join(font_dir, '**', ext)
                 for font_path in glob.glob(pattern, recursive=True):
+                    key = os.path.normcase(os.path.abspath(font_path))
+                    if key in registered:
+                        continue
+                    registered.add(key)
                     self._register_font(font_path)
 
     def _register_font(self, path: str) -> None:
@@ -108,6 +120,10 @@ class FontManager:
             filename = os.path.basename(path)
             name_without_ext = os.path.splitext(filename)[0]
             family, style = self._parse_font_name(name_without_ext)
+            if IS_WINDOWS:
+                # windows core fonts have terse filenames (cour.ttf is
+                # Courier New), so take the names stored inside the font
+                family, style = self._read_font_names(path, family, style)
 
             font_info = FontInfo(
                 name=name_without_ext,
@@ -125,6 +141,18 @@ class FontManager:
 
         except (OSError, ValueError) as e:
             logger.debug(f"could not register font {path}: {e}")
+
+    @staticmethod
+    def _read_font_names(path: str, family: str, style: str) -> Tuple[str, str]:
+        try:
+            stored_family, stored_style = ImageFont.truetype(path, 12).getname()
+        except (OSError, ValueError):
+            return family, style
+        if not stored_family:
+            return family, style
+        # match the style spellings the filename parser produces
+        stored_style = (stored_style or "Regular").replace(" ", "").replace("Oblique", "Italic")
+        return stored_family, stored_style
 
     def _parse_font_name(self, name: str) -> Tuple[str, str]:
         style = "Regular"

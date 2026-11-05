@@ -1,0 +1,68 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      PYTHONIOENCODING: utf-8
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      # the app's windows code paths, exercised on a real windows machine
+      - name: Check Windows support
+        run: |
+          python -c "import socket; print('rfcomm sockets:', socket.AF_BLUETOOTH, socket.BTPROTO_RFCOMM)"
+          python -c "from src.core.printer import PrinterConnection; print('paired devices:', PrinterConnection.scan_for_printers())"
+          python -c "from src.utils.font_manager import FontManager; f = FontManager().get_available_families(); print(len(f), 'font families, e.g.', [n for n in f if n in ('Courier New', 'Consolas', 'Arial', 'Catrinity')])"
+          python -c "import tkinter; root = tkinter.Tk(); from src.utils.clipboard import clipboard_set, clipboard_get; assert clipboard_set('thermal'), 'set failed'; assert clipboard_get() == 'thermal', 'get failed'; print('clipboard ok')"
+
+      - name: Start the app from source
+        env:
+          THERMAL_PRINTER_SMOKE_TEST: "1"
+        run: python -m src.main
+
+      - name: Build the exe
+        run: pyinstaller --noconfirm thermal-printer.spec
+
+      - name: Start the packaged exe
+        shell: pwsh
+        env:
+          THERMAL_PRINTER_SMOKE_TEST: "1"
+        run: |
+          $p = Start-Process -FilePath dist\ThermalPrinter.exe -PassThru
+          $null = $p.Handle  # keeps ExitCode readable after exit
+          if (-not $p.WaitForExit(120000)) {
+            Stop-Process -Id $p.Id -Force
+            throw "ThermalPrinter.exe did not exit within 2 minutes"
+          }
+          if (Test-Path dist\thermal-printer.log) { Get-Content dist\thermal-printer.log }
+          if ($p.ExitCode -ne 0) { throw "ThermalPrinter.exe exited with code $($p.ExitCode)" }
+          Write-Host "packaged exe started and exited cleanly"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ThermalPrinter-windows
+          path: dist/ThermalPrinter.exe
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ThermalPrinter.exe

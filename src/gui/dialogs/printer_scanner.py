@@ -23,6 +23,7 @@ from ...config.defaults import (
     SCROLL_BIND_DELAY_MS,
 )
 from ..theme import AppFonts
+from ...utils.runtime import IS_WINDOWS
 
 
 class PrinterScannerDialog(CenteredDialog):
@@ -108,7 +109,11 @@ class PrinterScannerDialog(CenteredDialog):
 
         info_label = ctk.CTkLabel(
             info_frame,
-            text="Supported printers ('CorePrint-XXXX', 'Cubinote-XXXX') are highlighted.",
+            text=(
+                "Pair the printer in Windows Settings > Bluetooth & devices first.\n"
+                if IS_WINDOWS else ""
+            ) + "Supported printers ('CorePrint-XXXX', 'Cubinote-XXXX') are highlighted.",
+            justify="left",
             text_color="gray",
             font=AppFonts.normal()
         )
@@ -185,7 +190,12 @@ class PrinterScannerDialog(CenteredDialog):
         if not devices:
             no_devices = ctk.CTkLabel(
                 self.device_scroll,
-                text="No devices found.\nMake sure Bluetooth is enabled and the printer is on.",
+                text=(
+                    "No paired devices found.\nPair the printer in Windows Settings > "
+                    "Bluetooth & devices, then rescan."
+                    if IS_WINDOWS else
+                    "No devices found.\nMake sure Bluetooth is enabled and the printer is on."
+                ),
                 text_color="gray",
                 justify="center"
             )

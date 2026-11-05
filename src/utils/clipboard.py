@@ -1,8 +1,17 @@
-# clipboard utilities for wayland and x11
+# clipboard utilities for wayland, x11 and windows
 
 import os
 import subprocess
 from typing import Optional
+
+from .runtime import IS_WINDOWS
+
+
+def _tk_root():
+    # tk's own clipboard is the system clipboard on windows; borrow the app's
+    # root window rather than creating a stray one
+    import tkinter
+    return tkinter._default_root
 
 
 def is_wayland() -> bool:
@@ -72,6 +81,16 @@ def _set_x11_clipboard_xsel(text: str) -> bool:
 
 
 def clipboard_get() -> Optional[str]:
+    if IS_WINDOWS:
+        import tkinter
+        root = _tk_root()
+        if root is None:
+            return None
+        try:
+            return root.clipboard_get()
+        except tkinter.TclError:
+            return None
+
     if is_wayland():
         try:
             result = subprocess.run(
@@ -94,6 +113,18 @@ def clipboard_get() -> Optional[str]:
 
 
 def clipboard_set(text: str) -> bool:
+    if IS_WINDOWS:
+        import tkinter
+        root = _tk_root()
+        if root is None:
+            return False
+        try:
+            root.clipboard_clear()
+            root.clipboard_append(text)
+            return True
+        except tkinter.TclError:
+            return False
+
     if is_wayland():
         try:
             process = subprocess.Popen(
