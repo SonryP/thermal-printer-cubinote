@@ -67,6 +67,15 @@ class PrinterApp(ctk.CTk):
 
         self._printer.add_state_callback(self._on_connection_state_change)
 
+        # customtkinter remembers that withdraw() came before the window
+        # existed, and then refuses to show it again from mainloop(). on
+        # windows its titlebar-colour pass withdraws the window once more and
+        # restores the state it saved before that - which is unset this early,
+        # so the restore is a no-op and the window never appears. update()
+        # marks the window as existing, so mainloop() leaves it alone and the
+        # deiconify() below is the one that counts.
+        self.update()
+
         # show window
         self.deiconify()
 

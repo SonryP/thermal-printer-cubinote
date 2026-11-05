@@ -103,6 +103,33 @@ def _report_startup_error(message: str) -> None:
             pass
 
 
+_SMOKE_TEST_FAILURES: list = []
+
+
+def _smoke_test_check(app) -> None:
+    # starting without crashing is not enough: a withdrawn window leaves the
+    # app running with nothing on screen, which is exactly how the windows
+    # build broke. assert the window is really on screen, then quit
+    try:
+        state = app.wm_state()
+        viewable = bool(app.winfo_viewable())
+        width, height = app.winfo_width(), app.winfo_height()
+        print(
+            f"smoke test: state={state} viewable={viewable} "
+            f"size={width}x{height} at {app.winfo_rootx()},{app.winfo_rooty()}"
+        )
+        if state != "normal":
+            _SMOKE_TEST_FAILURES.append(f"window state is {state!r}, expected 'normal'")
+        if not viewable:
+            _SMOKE_TEST_FAILURES.append("window is not viewable (nothing would be on screen)")
+        if width <= 1 or height <= 1:
+            _SMOKE_TEST_FAILURES.append(f"window has no size ({width}x{height})")
+    except Exception as e:
+        _SMOKE_TEST_FAILURES.append(f"could not inspect the window: {e!r}")
+    finally:
+        app.destroy()
+
+
 def main() -> None:
     if IS_FROZEN:
         _prepare_frozen_runtime()
@@ -111,8 +138,12 @@ def main() -> None:
         from src.gui.app import PrinterApp
         app = PrinterApp()
         if SMOKE_TEST:
-            app.after(3000, app.destroy)
+            app.after(3000, lambda: _smoke_test_check(app))
         app.mainloop()
+        if SMOKE_TEST and _SMOKE_TEST_FAILURES:
+            for problem in _SMOKE_TEST_FAILURES:
+                print(f"smoke test: {problem}")
+            sys.exit(1)
     except ImportError as e:
         _report_startup_error(
             f"Import error: {e}\n\n"
